@@ -26,6 +26,8 @@ from get_ip import get_ip_address
 from predictor import Predictor
 from predictor_image import Predictor_image
 
+import math
+
 def prepare():
     print("send prepare result")
     send_prepare_result = ActorPrepareResult()
@@ -64,14 +66,22 @@ def get_prepare():
         )
 
 
+
+
 def get_pointcloud_msg():
     # 获取点云信息
     msg = pointcloud_channel.get_pointcloud()
+    if len(msg) == 0:
+        print("==========================no pointcloud=================================")
+        # return None
     return model.infer(msg) # 通过点云信息获取控制命令
 
 
 def get_image_msg():
     msg = image_channel.get_image()
+    if len(msg) == 0:
+        print("==========================no image=================================")
+        return
     return model.infer(msg)
     
 
@@ -123,9 +133,54 @@ def process_notify():
                 )
             )
 
+# 声明全局变量n，用于记录连续10次速度都为9.9的次数
+n = 0
+under_acc = 0
+# 自定义函数，用于更新目标速度
+def update_target_speed(target_acc,target_speed):
+    global n # 声明全局变量n，用于记录连续速度为9.9的次数
+    if target_speed >= 9.9:
+        n += 1
+    if target_acc < 0:
+        n = 0
+    if 20 <= n:# 连续20次速度都为9.9
+        new_target_speed = (n - 20) * 3 + 9.9
+        target_speed = new_target_speed
+        target_acc = 3
+    ego_speed = model.get_ego_speed(ins_channel.get_ins())
+    # 如果车辆速度大于25m/s，目标速度设置为25m/s， 目标加速度设置为0
+    if ego_speed >= 30.0 or target_speed >= 30.0:
+        n = 0
+        target_acc = 0
+        target_speed = 30.0
+    print("ego_speed: ", ego_speed)
+    return target_acc, target_speed 
+
+def compute_destination_distance():
+    ins = ins_channel.get_ins()
+    logger.info("distance to destination: {}".format(model.get_destination(ins)))
+    return model.get_destination(ins)
 
 def send_control_cmd(target_acc, target_speed, target_steer):
+    '''
+    发送控制命令
+    :param target_acc: 目标加速度 单位m/s^2
+    :param target_speed: 目标速度 单位m/s
+    :param target_steer: 目标方向盘转角 单位弧度
+    :return: None
+    '''
     # print("control cmd: acc {}, speed {}, steer {}".format(target_acc, target_speed, target_steer))
+    # 这里存在问题 target_speed 最多只能输出为9.9
+    
+    # 如果目标方向盘转角在-0.02到0.02之间，说明直线行使，更新目标加速度和目标速度
+    # 同时满足距离目标点小于100m
+    
+    # print("distance to destination: ", compute_destination_distance(),compute_destination_distance() > 100.0)
+    # print("target_steer: ", target_steer,-0.02 <= target_steer <= 0.02)
+    
+    if -0.02 <= target_steer <= 0.02 and compute_destination_distance() > 50.0:
+        target_acc, target_speed = update_target_speed(target_acc, target_speed)
+        print("after update control cmd: acc {}, speed {}, steer {}".format(target_acc, target_speed, target_steer))
     cmd = VehicleControl()
     # 目标加速度
     cmd.acceleration = target_acc
@@ -145,7 +200,8 @@ def get_vehicle_feedback():
     if msg is None or ret < 0:
         return
     if msg.type() == VEHICLE_FEEDBACK:
-        feedback = VehicleFeedback()
+        feedback = VehicleFeedback()    
+    
         data = libMulticastNetwork.getMessageData(msg)
         feedback.ParseFromString(data)
         model.update_vehicle_feedback(feedback)
@@ -171,9 +227,12 @@ def main():
             time.sleep(1)
             continue
         get_vehicle_pose() # 获取车辆的信息
-        # get_image()
-        # cmd = get_pointcloud_msg() # 通过点云信息获取控制命令
-        cmd = get_image_msg()
+        # get_image() # 保存车辆图片
+        cmd = get_pointcloud_msg() # 通过点云信息获取控制命令
+        # if cmd is None:
+            # print("=============================cmd is none==============================================")
+        
+        # cmd = get_image_msg()
         if cmd is not None:
             send_control_cmd(cmd.acc, cmd.speed, cmd.steer) # 发送控制命令
         get_vehicle_feedback() # 获取车辆的反馈信息
@@ -182,20 +241,21 @@ def main():
 if __name__ == "__main__":
     
     # 将当前时间作为log文件名
-    # import time
-    # import logging
-    # logging.basicConfig(filename=time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime()) + ".log", level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    # logger = logging.getLogger(__name__)
+    import time
+    import logging
+    logging.basicConfig(filename=time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime()) + ".log", level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
     
     arg_parser = argparse.ArgumentParser()
     # arg_parser.add_argument("--config_center", type=str, default="10.11.17.88:52009")
     arg_parser.add_argument("--config_center", type=str, default="101.132.140.171:50009")
-    arg_parser.add_argument("--field_id", type=str, default="888888")
-    arg_parser.add_argument("--net_interface", type=str, default="wlo1")
+    arg_parser.add_argument("--field_id", type=str, default="field-fanyi-56-0528153154-100")
+    arg_parser.add_argument("--net_interface", type=str, default="enp5s0")
     args = arg_parser.parse_args()
     param = libMulticastNetwork.CreateChannelsParam()
 
     local_ip = get_ip_address(args.net_interface)
+    print("local ip: ", local_ip )
 
     #######################################################
     ###################### 需要修改 ########################
@@ -235,11 +295,11 @@ if __name__ == "__main__":
         sys.exit(1)
 
     img_id = 0
-    save_results = False
+    save_results = True
     recv_prepare = False
     start_test = False
     actor_id = "apollo_testee"
 
-    # model = Predictor()
-    model = Predictor_image()
+    model = Predictor()
+    # model = Predictor_image()
     main()

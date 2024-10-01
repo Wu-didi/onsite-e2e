@@ -75,7 +75,7 @@ def pixel_to_camera_coords(x, y, z):
     Zc = zc  
       
     return Xc, Yc, Zc  
-  
+
 
 # # 调用函数并打印结果  
 # Xc, Yc, Zc = pixel_to_camera_coords(x_pixel, y_pixel, z_depth, fx, fy, cx, cy)  
@@ -126,12 +126,12 @@ class Predictor:
         # checkpoint = (
         #     "hv_pointpillars_fpn_sbn-all_4x8_2x_nus-3d_20210826_104936-fca299c1.pth"
         # )
-        # config = "pointpillars_hv_secfpn_8xb6-160e_kitti-3d-car.py"
-        # checkpoint = (
-        #     "hv_pointpillars_secfpn_6x8_160e_kitti-3d-car_20220331_134606-d42d15ed.pth"
-        # )
-        config = "/home/wudi/python_files/onsite/v3/e2e/perception_model/pointpillars/pointpillars_hv_fpn_sbn-all_8xb2-amp-2x_nus-3d.py"
-        checkpoint = "/home/wudi/python_files/onsite/v3/e2e/perception_model/pointpillars/hv_pointpillars_fpn_sbn-all_fp16_2x8_2x_nus-3d_20201021_120719-269f9dd6.pth"
+        config = "/home/wudi/python_files/onsite/0519update/e2e/perception_model/pointpillars/pointpillars_hv_secfpn_8xb6-160e_kitti-3d-car.py"
+        checkpoint = (
+            "/home/wudi/python_files/onsite/0519update/e2e/perception_model/pointpillars/hv_pointpillars_secfpn_6x8_160e_kitti-3d-car_20220331_134606-d42d15ed.pth"
+        )
+        # config = "/home/wudi/python_files/onsite/v3/e2e/perception_model/pointpillars/pointpillars_hv_fpn_sbn-all_8xb2-amp-2x_nus-3d.py"
+        # checkpoint = "/home/wudi/python_files/onsite/v3/e2e/perception_model/pointpillars/hv_pointpillars_fpn_sbn-all_fp16_2x8_2x_nus-3d_20201021_120719-269f9dd6.pth"
         
         
         self.model = init_model(config, checkpoint, device="cuda:0")
@@ -148,14 +148,6 @@ class Predictor:
 
     def process_pointcloud_msg(self, pointclouds):
         for pointcloud in pointclouds:
-            # print(
-            #     pointcloud.sequence_num,
-            #     pointcloud.timestamp_sec,
-            #     pointcloud.lidar_timestamp,
-            #     pointcloud.points_num,
-            # )
-            # print(pointcloud.points.shape) # (58383, 4)
-            # print(pointcloud.points[0])
             t0 = time.time()
             result, data = inference_detector(self.model, pointcloud.points)
             t1 = time.time()
@@ -167,21 +159,12 @@ class Predictor:
             # print("labels: ", labels)
             # logging.info("labels: %s", labels)
             scores_3d = result._pred_instances_3d.scores_3d.cpu().numpy()
-            # logging.info("scores_3d: %s", scores_3d)
-            # print("scores_3d: ", scores_3d)
-            # logging.info("box3ds: %s", box3ds)
-            # print("box3ds: ", box3ds)
-            threshold = 0.5
+            threshold = 0.2
             box3ds = box3ds[scores_3d > threshold]
             # labels and scores_3d should be filtered by scores_3d > 0.2
             labels = labels[scores_3d > threshold]
             scores_3d = scores_3d[scores_3d > threshold]
             print("box3ds: ", box3ds)
-            # logging.info("after remove low score box3ds: %s", box3ds)
-
-            # transform nuscenes label to onsite label
-            labels = transform_list(labels)
-            print(labels)
             print("inference time: ", t1 - t0)
 
             # box format : [ x, y, z, xdim(l), ydim(w), zdim(h), orientation] + label score
@@ -207,7 +190,7 @@ class Predictor:
             #=======================================================================================================
             
             # obstacles = self.process_pubrole_notrack( labels, box3ds)
-            # print("obstacles: ", obstacles)
+            print("obstacles: ", obstacles)
             # logging.info("result obstacles: %s", obstacles)
             return obstacles
         
@@ -291,18 +274,20 @@ class Predictor:
     def process_pubrole(self, bboxes):
         obstacles = []
         for bbox in bboxes:
+            print("=================================in process pubrole: ",bbox)
+            
             ob = Box2d()
             ob.id = str(bbox.node_id)
             xx, yy, zz = transform([bbox.x, bbox.y, bbox.z])
-            # print("xx: ", xx)
-            # print("yy: ", yy)
+            print("xx: ", xx)
+            print("yy: ", yy)
             
             ob.x = xx + self.ego.x
             ob.y = yy + self.ego.y
             # print("self.ego.x: ", self.ego.x)
             # print("self.ego.y: ", self.ego.y)
-            print("ob.x: ", ob.x)
-            print("ob.y: ", ob.y)
+            # print("ob.x: ", ob.x)
+            # print("ob.y: ", ob.y)
             # xx:  9.988031029379489
             # yy:  -13.343526885557441
             # self.ego.x:  784829.0141296387
@@ -311,13 +296,13 @@ class Predictor:
             # ob.y:  3352910.362665131
 
             ob.length = bbox.length
-            ob.width = bbox.width
+            ob.width = bbox.width+5
             ob.theta = bbox.heading
             ob.roleType = RoleType.VEHICLE
             vx = bbox.vx
             vy = bbox.vy
             vz = bbox.vz
-            ob.speed = math.sqrt(vx * vx + vy * vy + vz * vz)
+            ob.speed = math.sqrt(vx * vx + vy * vy + vz * vz)*5
             if ob.speed < 0.01:
                 ob.is_static = True
             else:
@@ -341,6 +326,8 @@ class Predictor:
         goal.y = y
         goal.theta = theta
         VTS_Planner_UpdateGoal(goal)
+        self.goalx = x
+        self.goaly = y
 
     def update_ego(self, ins):
         self.ego = Box2d()
@@ -381,12 +368,33 @@ class Predictor:
 
     def infer(self, pointclouds):
         if self.ego is None or self.vehicle_feedback is None:
-            return
+            return 
         if len(pointclouds) == 0:
-            print("no pointclouds")
-            obstacles = []
+            print("===========================no pointclouds===================================")
+            return None
         else:
-            obstacles = self.process_pointcloud_msg(pointclouds)
+            # obstacles = self.process_pointcloud_msg(pointclouds)
+            obstacles = []
         control_cmd = ControlCommand()
         VTS_Planner_Process(obstacles, self.ego, self.vehicle_feedback, control_cmd)
         return control_cmd
+    
+    # 计算一下当前的目标点和车辆的距离
+    def get_destination(self, ins):
+        egox = ins.position.x
+        egoy = ins.position.y
+        
+        goalx = self.goalx
+        goaly = self.goaly
+        
+        distance = math.sqrt((goalx - egox) ** 2 + (goaly - egoy) ** 2)
+        return distance
+    
+        # 计算一下当前的车辆的速度
+    def get_ego_speed(self, ins):
+        # 获取车辆速度信息
+        vx = ins.linear_velocity.x
+        vy = ins.linear_velocity.y
+        vz = ins.linear_velocity.z
+        ego_speed = math.sqrt(vx * vx + vy * vy + vz * vz)
+        return ego_speed

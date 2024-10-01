@@ -18,9 +18,9 @@ from modules.tracking.tracker import AB3DMOT, BBox2DataFrame
 
 from ultralytics import YOLO
 import cv2
-# import logging
+import logging
 
-# logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 def euler_to_quaternion(r):
     (yaw, pitch, roll) = (r[0], r[1], r[2])
@@ -51,6 +51,12 @@ foc  = 735.059326
 real_hight_person_inch = 66.9
 # 预设置车辆高度inch
 real_hight_car_inch = 57.08
+# traffic-cone
+real_hight_cone_inch = 10
+# bus
+real_hight_bus_inch = 144
+# truck
+real_hight_truck_inch = 144
 
 
 # 单目测量距离，通过相似三角形
@@ -105,9 +111,6 @@ def show_image(image):
     cv2.imshow("Image", image)
     cv2.waitKey(1)
 
-# # 调用函数并打印结果  
-# Xc, Yc, Zc = pixel_to_camera_coords(x_pixel, y_pixel, z_depth, fx, fy, cx, cy)  
-# print(f"相机坐标系下的坐标: ({Xc:.2f}, {Yc:.2f}, {Zc:.2f})")
 
 
 # only for lidar, 实现了从Lidar坐标系到车身坐标系的平移转换，没有实现旋转转换
@@ -129,29 +132,10 @@ def transform(xyz):
     xyz[2] -= transform_coeff["z"]
     return xyz
 
-def transform_list(input_list):  
-    # 创建一个新列表来存储替换后的值  
-    result_list = []  
-
-    # 遍历输入列表并替换元素  
-    for num in input_list:  
-        if num in [8, 9]:  
-            result_list.append(-1)  
-        elif num in [0, 1, 2, 3, 4, 6]:  
-            result_list.append(0)  
-        elif num == 5:  
-            result_list.append(2)  
-        elif num == 7:  
-            result_list.append(1)  
-        # 如果num不在上述任何一组中，则保持原样（但在这个特定问题中，我们不需要这个else分支）  
-        
-    # 返回替换后的列表  
-    return result_list
-
 class Predictor_image:
     def __init__(self):
         # Load a model
-        self.YOLO_model = YOLO('yolov8s.pt')  # load an official model~
+        self.YOLO_model = YOLO('/home/wudi/python_files/onsite/0519update/e2e/perception_model/yolov8/onsite_v1.0/best.pt')  # load an official model~
         # self.tracker = AB3DMOT(ID_init=1)
         self.default_map = "AITownReconstructed_V0103_200518.xodr"
         default_map_path = os.path.join(os.path.dirname(__file__), "maps", self.default_map)
@@ -162,88 +146,15 @@ class Predictor_image:
         self.vehicle_feedback.steering_wheel_angle = 0.0
         self.vehicle_feedback.brake_pedal_position = 0.0
         self.vehicle_feedback.accelerator_pedal_position = 0.0
-        
-        self.id2class = {0: 'person', 1: 'bicycle', 2: 'car', 3: 'motorcycle', 4: 'airplane', 5: 'bus', 6: 'train', 7: 'truck', 8: 'boat', 9: 'traffic light', 10: 'fire hydrant', \
-    11: 'stop sign', 12: 'parking meter', 13: 'bench', 14: 'bird', 15: 'cat', 16: 'dog', 17: 'horse', 18: 'sheep', 19: 'cow', 20: 'elephant', 21: 'bear', \
-        22: 'zebra', 23: 'giraffe', 24: 'backpack', 25: 'umbrella', 26: 'handbag', 27: 'tie', 28: 'suitcase', 29: 'frisbee', 30: 'skis', 31: 'snowboard', \
-            32: 'sports ball', 33: 'kite', 34: 'baseball bat', 35: 'baseball glove', 36: 'skateboard', 37: 'surfboard', 38: 'tennis racket', 39: 'bottle', 40: 'wine glass', \
-                41: 'cup', 42: 'fork', 43: 'knife', 44: 'spoon', 45: 'bowl', 46: 'banana', 47: 'apple', 48: 'sandwich', 49: 'orange', 50: 'broccoli', 51: 'carrot', 52: 'hot dog',\
-                    53: 'pizza', 54: 'donut', 55: 'cake', 56: 'chair', 57: 'couch', 58: 'potted plant', 59: 'bed', 60: 'dining table', 61: 'toilet', 62: 'tv', 63: 'laptop', \
-                        64: 'mouse', 65: 'remote', 66: 'keyboard', 67: 'cell phone', 68: 'microwave', 69: 'oven', 70: 'toaster', 71: 'sink', 72: 'refrigerator', \
-    73: 'book', 74: 'clock', 75: 'vase', 76: 'scissors', 77: 'teddy bear', 78: 'hair drier', 79: 'toothbrush'}
+        self.id2class = {0: 'person', 1: 'car', 2: 'bus', 3: 'truck', 4: 'traffic-cone'}
 
-    def process_pointcloud_msg(self, pointclouds):
-        for pointcloud in pointclouds:
-            # print(
-            #     pointcloud.sequence_num,
-            #     pointcloud.timestamp_sec,
-            #     pointcloud.lidar_timestamp,
-            #     pointcloud.points_num,
-            # )
-            # print(pointcloud.points.shape) # (58383, 4)
-            # print(pointcloud.points[0])
-            t0 = time.time()
-            result, data = inference_detector(self.model, pointcloud.points)
-            t1 = time.time()
-            box3ds = (
-                result._pred_instances_3d.bboxes_3d.tensor.cpu().numpy()
-            )  # x y z l w h yaw
-            # print("box3ds: ", box3ds)
-            labels = result._pred_instances_3d.labels_3d.cpu().numpy()
-            # print("labels: ", labels)
-            # logging.info("labels: %s", labels)
-            scores_3d = result._pred_instances_3d.scores_3d.cpu().numpy()
-            # logging.info("scores_3d: %s", scores_3d)
-            # print("scores_3d: ", scores_3d)
-            # logging.info("box3ds: %s", box3ds)
-            # print("box3ds: ", box3ds)
-            threshold = 0.5
-            box3ds = box3ds[scores_3d > threshold]
-            # labels and scores_3d should be filtered by scores_3d > 0.2
-            labels = labels[scores_3d > threshold]
-            scores_3d = scores_3d[scores_3d > threshold]
-            print("box3ds: ", box3ds)
-            # logging.info("after remove low score box3ds: %s", box3ds)
-
-            # transform nuscenes label to onsite label
-            labels = transform_list(labels)
-            print(labels)
-            print("inference time: ", t1 - t0)
-
-            # box format : [ x, y, z, xdim(l), ydim(w), zdim(h), orientation] + label score
-            # dets format : hwlxyzo + class
-            
-            #-======================================================================================================
-            
-            dets = box3ds[:, [5, 4, 3, 0, 1, 2, 6]] # hwlxyzo
-            info_data = []
-            dic_dets = {}
-            info_data = np.stack((labels, scores_3d), axis=1)
-
-            dic_dets = {
-                "dets": dets,
-                "info": info_data,
-                "timestamp": pointcloud.lidar_timestamp,
-                "frameid": pointcloud.sequence_num,
-            }
-            results = self.tracker.track_detections(dic_dets)
-            print("results: ", results)
-            obstacles = self.process_pubrole(results)
-            
-            #=======================================================================================================
-            
-            # obstacles = self.process_pubrole_notrack( labels, box3ds)
-            print("obstacles: ", obstacles)
-            # logging.info("result obstacles: %s", obstacles)
-            return obstacles
-        
     def process_image_msg(self, images):
         # print(len(images))
         # for image in images: # three images 
             # 
         img = images[0].data.astype(np.uint8).reshape(720, 1280, 3)
         t0 = time.time()
-        result = self.YOLO_model.predict(img, conf=0.5, iou=0.5)
+        result = self.YOLO_model.predict(img, conf=0.3, iou=0.5)
         
         # logging.info("after remove low score box3ds: %s", box3ds)
         t1 = time.time()
@@ -269,7 +180,7 @@ class Predictor_image:
                 if 100 <= single_box.xywh[0][0].cpu().numpy() <= 1200 and \
                     630 <= single_box.xywh[0][1].cpu().numpy()  <= 700:
                     continue  # Ignore the box if its center is within the specified region
-                if single_box.cls == 0 or single_box.cls == 1:
+                if single_box.cls == 0:
                     # print('detect is person')
                     # 获取person pix high
                     x = single_box.xywh[0][0].cpu().numpy()
@@ -279,15 +190,15 @@ class Predictor_image:
                     real_dist = get_distance(real_hight_person_inch, h)
                     coords_carm = pixel_to_camera_coords(x, y, real_dist)
                     # print("real distance is ", real_dist)
-                    result_boxes.append([coords_carm[0], coords_carm[1], coords_carm[2]])
-                    r.orig_img = draw_rectangle(r.orig_img, int(single_box.xyxy[0][0].cpu().numpy()),
-                                        int(single_box.xyxy[0][1].cpu().numpy()),
-                                        int(single_box.xyxy[0][2].cpu().numpy()),
-                                        int(single_box.xyxy[0][3].cpu().numpy()),
-                                        str(self.id2class[single_box.cls] +coords_carm))
-                elif single_box.cls == 2 or single_box.cls == 3 or single_box.cls == 4 or single_box.cls == 5 \
-                    or single_box.cls == 6 or single_box.cls == 8:
-                    print(single_box.xyxy)
+                    result_boxes.append([coords_carm[0], coords_carm[1], coords_carm[2],str(self.id2class[int(single_box.cls.cpu().numpy())])])
+                    # r.orig_img = draw_rectangle(r.orig_img, int(single_box.xyxy[0][0].cpu().numpy()),
+                    #                     int(single_box.xyxy[0][1].cpu().numpy()),
+                    #                     int(single_box.xyxy[0][2].cpu().numpy()),
+                    #                     int(single_box.xyxy[0][3].cpu().numpy()),
+                    #                     str(self.id2class[int(single_box.cls.cpu().numpy())]) +str(coords_carm))
+                    
+                elif single_box.cls == 1:
+                    # print(single_box.xyxy)
                     # print('detect is car')
                     # 获取person pix high
                     x = single_box.xywh[0][0].cpu().numpy()
@@ -298,17 +209,78 @@ class Predictor_image:
                     # print("real distance is ", real_dist)
                     coords_carm = pixel_to_camera_coords(x, y, real_dist)
                     # print("coords_carm is ", coords_carm)
-                    result_boxes.append([coords_carm[0], coords_carm[1], coords_carm[2]])
-                    r.orig_img = draw_rectangle(r.orig_img, int(single_box.xyxy[0][0].cpu().numpy()),
-                                        int(single_box.xyxy[0][1].cpu().numpy()),
-                                        int(single_box.xyxy[0][2].cpu().numpy()),
-                                        int(single_box.xyxy[0][3].cpu().numpy()),
-                                        str(self.id2class[single_box.cls] +coords_carm))
+                    result_boxes.append([coords_carm[0], coords_carm[1], coords_carm[2],str(self.id2class[int(single_box.cls.cpu().numpy())])])
+                    # r.orig_img = draw_rectangle(r.orig_img, int(single_box.xyxy[0][0].cpu().numpy()),
+                    #                     int(single_box.xyxy[0][1].cpu().numpy()),
+                    #                     int(single_box.xyxy[0][2].cpu().numpy()),
+                    #                     int(single_box.xyxy[0][3].cpu().numpy()),
+                    #                     str(self.id2class[int(single_box.cls.cpu().numpy())]) +str(coords_carm))
+                # bus
+                elif single_box.cls == 2:
+                    # print(single_box.xyxy)
+                    # print('detect is car')
+                    # 获取person pix high
+                    x = single_box.xywh[0][0].cpu().numpy()
+                    y = single_box.xywh[0][1].cpu().numpy()
+                    h = single_box.xywh[0][-1].cpu().numpy()
+
+                    real_dist = get_distance(real_hight_bus_inch, h)
+                    # print("real distance is ", real_dist)
+                    coords_carm = pixel_to_camera_coords(x, y, real_dist)
+                    # print("coords_carm is ", coords_carm)
+                    result_boxes.append([coords_carm[0], coords_carm[1], coords_carm[2],str(self.id2class[int(single_box.cls.cpu().numpy())])])
+                    # r.orig_img = draw_rectangle(r.orig_img, int(single_box.xyxy[0][0].cpu().numpy()),
+                    #                     int(single_box.xyxy[0][1].cpu().numpy()),
+                    #                     int(single_box.xyxy[0][2].cpu().numpy()),
+                    #                     int(single_box.xyxy[0][3].cpu().numpy()),
+                    #                     str(self.id2class[int(single_box.cls.cpu().numpy())]) +str(coords_carm))
+                
+                #truck
+                elif single_box.cls == 3:
+                    # print(single_box.xyxy)
+                    # print('detect is car')
+                    # 获取person pix high
+                    x = single_box.xywh[0][0].cpu().numpy()
+                    y = single_box.xywh[0][1].cpu().numpy()
+                    h = single_box.xywh[0][-1].cpu().numpy()
+
+                    real_dist = get_distance(real_hight_truck_inch, h)
+                    # print("real distance is ", real_dist)
+                    coords_carm = pixel_to_camera_coords(x, y, real_dist)
+                    # print("coords_carm is ", coords_carm)
+                    result_boxes.append([coords_carm[0], coords_carm[1], coords_carm[2],str(self.id2class[int(single_box.cls.cpu().numpy())])])
+                    # r.orig_img = draw_rectangle(r.orig_img, int(single_box.xyxy[0][0].cpu().numpy()),
+                    #                     int(single_box.xyxy[0][1].cpu().numpy()),
+                    #                     int(single_box.xyxy[0][2].cpu().numpy()),
+                    #                     int(single_box.xyxy[0][3].cpu().numpy()),
+                    #                     str(self.id2class[int(single_box.cls.cpu().numpy())]) +str(coords_carm))
+                    
+                #traffic-cone
+                elif single_box.cls == 4:
+                    # print(single_box.xyxy)
+                    # print('detect is car')
+                    # 获取person pix high
+                    x = single_box.xywh[0][0].cpu().numpy()
+                    y = single_box.xywh[0][1].cpu().numpy()
+                    h = single_box.xywh[0][-1].cpu().numpy()
+
+                    real_dist = get_distance(real_hight_cone_inch, h)
+                    # print("real distance is ", real_dist)
+                    coords_carm = pixel_to_camera_coords(x, y, real_dist)
+                    # print("coords_carm is ", coords_carm)
+                    result_boxes.append([coords_carm[0], coords_carm[1], coords_carm[2],str(self.id2class[int(single_box.cls.cpu().numpy())])])
+                    # r.orig_img = draw_rectangle(r.orig_img, int(single_box.xyxy[0][0].cpu().numpy()),
+                    #                     int(single_box.xyxy[0][1].cpu().numpy()),
+                    #                     int(single_box.xyxy[0][2].cpu().numpy()),
+                    #                     int(single_box.xyxy[0][3].cpu().numpy()),
+                    #                     str(self.id2class[int(single_box.cls.cpu().numpy())]) +str(coords_carm))
+                
+                
                 else:
                     print('detect is others')
                 
             # show_image(r.orig_img)
-            cv2.imwrite(f'result.jpg', r.orig_img)
+            # cv2.imwrite(f'result.jpg', r.orig_img)
             # idx += 1
 
             # r.plot()  # plot predictions
@@ -325,35 +297,54 @@ class Predictor_image:
         # for i in range(1):
             ob = Box2d()
             ob.id = str(1)
-            xx, yy, zz = bbox
-            # print("xx: ", xx)
-            # print("yy: ", yy)
-            # print("zz: ", zz)
+            xx, yy, zz, class_ = bbox
             ob.x = xx + self.ego.x
             ob.y = -zz + self.ego.y
-            # ob.x = 784745.045715332
-            # ob.y = 3352900.5697021484
-
-            # print("self.ego.x: ", self.ego.x)
-            # print("self.ego.y: ", self.ego.y)
-            # print("ob.x: ", ob.x)
-            # print("ob.y: ", ob.y)
-
             
-            ob.length = 5
-            ob.width = 3
-            ob.theta = 3
+            logger.info("class_:%s, ob.x: %s, ob.y: %s, xx:%s, yy:%s, zz:%s", class_, ob.x, ob.y, xx, yy, zz)
+            
+            ob.length = 50
+            ob.width = 5
+            ob.theta = 0
             ob.roleType = RoleType.VEHICLE
             vx = 0
             vy = 0
             vz = 0
-            ob.speed = math.sqrt(vx * vx + vy * vy + vz * vz)
+            ob.speed = -5
             if ob.speed < 0.01:
                 ob.is_static = True
             else:
                 ob.is_static = False
             ob.is_virtual = False
             obstacles.append(ob)
+            
+        # 新增几个个虚拟障碍物
+        # obx = [784745.045715332, 784677.8129433006, 784692]
+        # oby = [3352900.5697021484, 3352876.871958466, 3352874]
+        # for i in range(3):
+        # # bbox = [1, 1, 1]
+        # # for i in range(1):
+        #     ob = Box2d()
+        #     ob.id = str(1)
+            
+        #     ob.x = obx[i]
+        #     ob.y = oby[i]
+        #     ob.x = 0 + self.ego.x
+        #     ob.y = -5 + self.ego.y
+        #     ob.length = 5
+        #     ob.width = 2
+        #     ob.theta = 0
+        #     ob.roleType = RoleType.VEHICLE
+        #     vx = 0
+        #     vy = 0
+        #     vz = 0
+        #     ob.speed = math.sqrt(vx * vx + vy * vy + vz * vz)
+        #     if ob.speed < 0.01:
+        #         ob.is_static = True
+        #     else:
+        #         ob.is_static = False
+        #     ob.is_virtual = False
+        #     obstacles.append(ob)
         return obstacles
 
     def process_pubrole(self, bboxes):
@@ -408,6 +399,9 @@ class Predictor_image:
         goal.x = x
         goal.y = y
         goal.theta = theta
+        self.goalx = x
+        self.goaly = y
+        self.goaltheta = theta
         print("====================goal==============================")
         print("goal: ", goal.x, goal.y, goal.theta)
         VTS_Planner_UpdateGoal(goal)
@@ -454,9 +448,31 @@ class Predictor_image:
             return
         if len(images) == 0:
             print("==========================no image=================================")
-            obstacles = []
+            return None
+            # obstacles = []
         else:
             obstacles = self.process_image_msg(images)
         control_cmd = ControlCommand()
         VTS_Planner_Process(obstacles, self.ego, self.vehicle_feedback, control_cmd)
         return control_cmd
+
+    # 计算一下当前的目标点和车辆的距离
+    def get_destination(self, ins):
+        egox = ins.position.x
+        egoy = ins.position.y
+        
+        goalx = self.goalx
+        goaly = self.goaly
+        
+        distance = math.sqrt((goalx - egox) ** 2 + (goaly - egoy) ** 2)
+        return distance
+    
+        # 计算一下当前的车辆的速度
+    def get_ego_speed(self, ins):
+        # 获取车辆速度信息
+        vx = ins.linear_velocity.x
+        vy = ins.linear_velocity.y
+        vz = ins.linear_velocity.z
+        ego_speed = math.sqrt(vx * vx + vy * vy + vz * vz)
+        logger.info("ego_speed: {}".format(ego_speed))
+        return ego_speed
